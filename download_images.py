@@ -14,6 +14,32 @@ import sys
 import threading
 from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+
+LOG_DIR = os.path.join(os.getcwd(), "logs")
+LOG_FILE = os.path.join(LOG_DIR, time.strftime("download-%Y%m%d.log"))
+LOG_LOCK = threading.Lock()
+ERROR_DIR = os.path.join(os.getcwd(), "error")
+ERROR_FILE = os.path.join(ERROR_DIR, time.strftime("error-%Y%m%d.log"))
+ERROR_LOCK = threading.Lock()
+
+def write_log(text: str) -> None:
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with LOG_LOCK:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(text + "\n")
+    except Exception:
+        pass
+
+def write_error(text: str) -> None:
+    try:
+        os.makedirs(ERROR_DIR, exist_ok=True)
+        with ERROR_LOCK:
+            with open(ERROR_FILE, "a", encoding="utf-8") as f:
+                f.write(text + "\n")
+    except Exception:
+        pass
 
 import requests
 from openpyxl import load_workbook
@@ -129,6 +155,7 @@ def process_excel(input_path: str, sheet_name: str, output_dir: str, start_row: 
                 on_progress({"status": "skip", "processed": processed, "total": total, "filename": filename})
             else:
                 print(f"已存在，跳过：{os.path.join(output_dir, filename)}")
+            write_log(f"已存在，跳过：{filename}")
 
     def handle_success(filename: str, dest_path: str):
         nonlocal processed
@@ -138,12 +165,15 @@ def process_excel(input_path: str, sheet_name: str, output_dir: str, start_row: 
                 on_progress({"status": "success", "processed": processed, "total": total, "filename": filename})
             else:
                 print(f"下载成功：{dest_path}")
+            write_log(f"下载成功：{filename}")
 
     def handle_fail(filename: str, url: str):
         if on_progress:
             on_progress({"status": "fail", "processed": processed, "total": total, "filename": filename})
         else:
             print(f"下载失败：{url}")
+        write_log(f"下载失败：{filename}")
+        write_error(f"下载失败：{filename} | URL：{url}")
 
     # 并发下载
     with ThreadPoolExecutor(max_workers=max(1, int(concurrency or 1))) as executor:
@@ -173,6 +203,7 @@ def process_excel(input_path: str, sheet_name: str, output_dir: str, start_row: 
         on_progress({"status": "done", "processed": processed, "total": total})
     else:
         print(f"完成，处理记录数：{processed}")
+    write_log(f"完成：{processed}/{total}")
     return processed
 
 
