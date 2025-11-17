@@ -11,7 +11,9 @@ import argparse
 import os
 import re
 import sys
+import threading
 from typing import Dict, List, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from openpyxl import load_workbook
@@ -82,7 +84,7 @@ def download_file(url: str, dest_path: str, timeout: int = 20) -> bool:
         return False
 
 
-def process_excel(input_path: str, sheet_name: str, output_dir: str, start_row: int = 2, end_row: Optional[int] = None, limit: Optional[int] = None, on_progress: Optional[callable] = None, cancel_event: Optional[object] = None) -> int:
+def process_excel(input_path: str, sheet_name: str, output_dir: str, start_row: int = 2, end_row: Optional[int] = None, limit: Optional[int] = None, on_progress: Optional[callable] = None, cancel_event: Optional[object] = None, concurrency: int = 4) -> int:
     """读取Excel并批量下载图片到指定目录。支持进度回调与取消。返回处理记录数。"""
     wb = load_workbook(input_path, read_only=True, data_only=True)
     if sheet_name not in wb.sheetnames:
@@ -95,57 +97,76 @@ def process_excel(input_path: str, sheet_name: str, output_dir: str, start_row: 
 
     ensure_dir(output_dir)
 
-    # 计算总数（含有URL的行）
-    total = 0
+    # 收集需要处理的记录
+    items = []
     for row in ws.iter_rows(min_row=start_row, max_row=end_row, values_only=True):
         image_cell = row[header_idx["imageUrl"]]
-        if image_cell not in (None, ""):
-            total += 1
-
-    processed = 0
-    for row in ws.iter_rows(min_row=start_row, max_row=end_row, values_only=True):
-        if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
-            break
-        # 提取各字段
+        if image_cell in (None, ""):
+            continue
         one = row[header_idx["一级"]]
         two1 = row[header_idx["二级1"]]
         two2 = row[header_idx["二级2"]]
         three = row[header_idx["三级"]]
         brand = row[header_idx["品牌"]]
         barcode = row[header_idx["条码"]]
-        image_url = strip_query(str(row[header_idx["imageUrl"]]))
-
-        # 跳过无URL记录
-        if image_url in (None, ""):
-            continue
-
-        url = image_url
+        image_url = strip_query(str(image_cell))
         filename = build_filename([one, two1, two2, three, brand, barcode])
         dest_path = os.path.join(output_dir, filename)
+        items.append((image_url, dest_path, filename))
 
-        # 跳过已存在文件
-        if os.path.exists(dest_path):
-            if on_progress:
-                on_progress({"status": "skip", "processed": processed + 1, "total": total, "filename": filename})
-            else:
-                print(f"已存在，跳过：{dest_path}")
+    if limit is not None:
+        items = items[:limit]
+
+    total = len(items)
+    processed = 0
+    lock = threading.Lock()
+
+    def handle_skip(filename: str):
+        nonlocal processed
+        with lock:
             processed += 1
-        else:
-            ok = download_file(url, dest_path)
-            if ok:
-                if on_progress:
-                    on_progress({"status": "success", "processed": processed + 1, "total": total, "filename": filename})
-                else:
-                    print(f"下载成功：{dest_path}")
-                processed += 1
+            if on_progress:
+                on_progress({"status": "skip", "processed": processed, "total": total, "filename": filename})
             else:
-                if on_progress:
-                    on_progress({"status": "fail", "processed": processed, "total": total, "filename": filename})
-                else:
-                    print(f"下载失败：{url}")
+                print(f"已存在，跳过：{os.path.join(output_dir, filename)}")
 
-        if limit is not None and processed >= limit:
-            break
+    def handle_success(filename: str, dest_path: str):
+        nonlocal processed
+        with lock:
+            processed += 1
+            if on_progress:
+                on_progress({"status": "success", "processed": processed, "total": total, "filename": filename})
+            else:
+                print(f"下载成功：{dest_path}")
+
+    def handle_fail(filename: str, url: str):
+        if on_progress:
+            on_progress({"status": "fail", "processed": processed, "total": total, "filename": filename})
+        else:
+            print(f"下载失败：{url}")
+
+    # 并发下载
+    with ThreadPoolExecutor(max_workers=max(1, int(concurrency or 1))) as executor:
+        futures = []
+        for url, dest_path, filename in items:
+            if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+                break
+            if os.path.exists(dest_path):
+                handle_skip(filename)
+                continue
+            def task(u=url, d=dest_path, f=filename):
+                if cancel_event is not None and getattr(cancel_event, "is_set", lambda: False)():
+                    return ("cancel", f, u, d)
+                ok = download_file(u, d)
+                return ("success" if ok else "fail", f, u, d)
+            futures.append(executor.submit(task))
+
+        for fut in as_completed(futures):
+            status, filename, url, dest_path = fut.result()
+            if status == "success":
+                handle_success(filename, dest_path)
+            elif status == "fail":
+                handle_fail(filename, url)
 
     wb.close()
     if on_progress:
@@ -164,6 +185,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--start", type=int, default=2, help="开始行（含），默认2跳过表头")
     parser.add_argument("--end", type=int, default=None, help="结束行（含），默认到最后一行")
     parser.add_argument("--limit", type=int, default=None, help="处理记录上限，仅用于试运行")
+    parser.add_argument("--concurrency", type=int, default=4, help="并发下载线程数")
     return parser.parse_args(argv)
 
 
@@ -176,6 +198,7 @@ def main() -> None:
         start_row=args.start,
         end_row=args.end,
         limit=args.limit,
+        concurrency=args.concurrency,
     )
 
 

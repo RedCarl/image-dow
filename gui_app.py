@@ -52,25 +52,29 @@ class App(tk.Tk):
         self.end_var = tk.StringVar(value="")
         ttk.Entry(frm, textvariable=self.end_var, width=10).grid(row=4, column=1, sticky=tk.W, padx=6)
 
+        ttk.Label(frm, text="并发数").grid(row=5, column=0, sticky=tk.W, pady=4)
+        self.concurrency_var = tk.StringVar(value="4")
+        ttk.Entry(frm, textvariable=self.concurrency_var, width=10).grid(row=5, column=1, sticky=tk.W, padx=6)
+
         # 进度条
         self.progress = ttk.Progressbar(frm, mode="determinate")
-        self.progress.grid(row=5, column=0, columnspan=3, sticky=tk.EW, pady=10)
+        self.progress.grid(row=6, column=0, columnspan=3, sticky=tk.EW, pady=10)
 
         # 状态日志
         self.log = tk.Text(frm, height=10)
-        self.log.grid(row=6, column=0, columnspan=3, sticky=tk.NSEW)
-        frm.rowconfigure(6, weight=1)
+        self.log.grid(row=7, column=0, columnspan=3, sticky=tk.NSEW)
+        frm.rowconfigure(7, weight=1)
 
         # 按钮
         btn_frame = ttk.Frame(frm)
-        btn_frame.grid(row=7, column=0, columnspan=3, sticky=tk.E, pady=8)
+        btn_frame.grid(row=8, column=0, columnspan=3, sticky=tk.E, pady=8)
         self.start_btn = ttk.Button(btn_frame, text="开始下载", command=self.start_download)
         self.start_btn.pack(side=tk.LEFT, padx=6)
         self.cancel_btn = ttk.Button(btn_frame, text="取消", command=self.cancel_download, state=tk.DISABLED)
         self.cancel_btn.pack(side=tk.LEFT)
 
         # 拖拽提示
-        ttk.Label(frm, text="提示：可点击“选择...”或将Excel路径粘贴到输入框").grid(row=8, column=0, columnspan=3, sticky=tk.W)
+        ttk.Label(frm, text="提示：可点击“选择...”或将Excel路径粘贴到输入框").grid(row=9, column=0, columnspan=3, sticky=tk.W)
 
     def pick_file(self):
         path = filedialog.askopenfilename(filetypes=[("Excel", "*.xlsx"), ("所有文件", "*.*")])
@@ -93,6 +97,14 @@ class App(tk.Tk):
             return
         end_val = self.end_var.get().strip()
         end_row = int(end_val) if end_val else None
+
+        try:
+            concurrency = int(self.concurrency_var.get() or "4")
+            if concurrency <= 0:
+                raise ValueError()
+        except Exception:
+            messagebox.showerror("错误", "并发数必须是正整数")
+            return
 
         if not input_path or not os.path.isfile(input_path):
             messagebox.showerror("错误", "请选择有效的Excel文件")
@@ -126,6 +138,7 @@ class App(tk.Tk):
                     limit=None,
                     on_progress=on_progress,
                     cancel_event=self.cancel_event,
+                    concurrency=concurrency,
                 )
             except Exception as e:
                 self.after(0, lambda: messagebox.showerror("错误", str(e)))
