@@ -1,0 +1,37 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'gui_app.py'
+      - 'download_images.py'
+      - '.github/workflows/windows-build.yml'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+            python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller openpyxl requests
+
+      - name: Build EXE
+        run: |
+          pyinstaller --windowed --name 商品图片下载器 gui_app.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: 商品图片下载器-windows
+          path: |
+            dist/商品图片下载器/**
