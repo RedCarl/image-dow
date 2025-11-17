@@ -32,6 +32,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 商品图片下载器-windows
+          name: product-image-downloader-windows
           path: |
             dist/商品图片下载器/**
